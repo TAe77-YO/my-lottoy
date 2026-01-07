@@ -16,14 +16,12 @@
     <!-- Firebase SDK (ES Modules) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, onSnapshot, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+        import { getFirestore, collection, addDoc, query, onSnapshot, doc, deleteDoc, getDocs } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
 
-        // 전역 객체에 Firebase SDK 등록 (Babel 스크립트에서 접근 가능하도록)
         window.FirebaseSDK = { 
             initializeApp, getAuth, signInAnonymously, onAuthStateChanged, 
-            signInWithCustomToken, getFirestore, collection, addDoc, query, 
-            onSnapshot, doc, deleteDoc 
+            getFirestore, collection, addDoc, query, onSnapshot, doc, deleteDoc, getDocs 
         };
     </script>
 
@@ -36,6 +34,7 @@
         input[type="range"]::-webkit-slider-runnable-track { width: 100%; height: 8px; cursor: pointer; background: #e2e8f0; border-radius: 4px; }
         input[type="range"]::-webkit-slider-thumb { height: 20px; width: 20px; border-radius: 50%; background: #4f46e5; cursor: pointer; -webkit-appearance: none; margin-top: -6px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         .ball-shadow { box-shadow: inset -4px -4px 8px rgba(0,0,0,0.2), 2px 2px 6px rgba(0,0,0,0.1); }
+        .tab-transition { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
@@ -52,249 +51,211 @@
             const [isLoaded, setIsLoaded] = useState(false);
             const [error, setError] = useState(null);
             
+            // 공용 당첨 데이터 상태
             const [lottoWinningData, setLottoWinningData] = useState([]);
             const [pensionWinningData, setPensionWinningData] = useState([]);
-            const [newRoundNums, setNewRoundNums] = useState("");
-            const [newPensionGroup, setNewPensionGroup] = useState("");
-            const [newPensionNums, setNewPensionNums] = useState("");
-            const [generatedNumbers, setGeneratedNumbers] = useState([]);
-            const [lottoHistory, setLottoHistory] = useState([]);
-            const [pensionResult, setPensionResult] = useState(null);
-            const [pensionHistory, setPensionHistory] = useState([]);
+            const [selectedLottoId, setSelectedLottoId] = useState("");
+            const [selectedPensionId, setSelectedPensionId] = useState("");
+
+            // 유저 개인 저장 데이터
+            const [mySavedLotto, setMySavedLotto] = useState([]);
+            const [mySavedPension, setMySavedPension] = useState([]);
+
+            // 입력 폼 상태 (분리됨)
+            const [lottoInput, setLottoInput] = useState({ round: "", nums: "" });
+            const [pensionInput, setPensionInput] = useState({ round: "", group: "", nums: "" });
+
+            // 추출 관련 상태
+            const [lottoSetsCount, setLottoSetsCount] = useState(1);
+            const [generatedLottoSets, setGeneratedLottoSets] = useState([]);
+            const [generatedPension, setGeneratedPension] = useState(null);
 
             const [options, setOptions] = useState({ 
-                includeFixed: [], excludeNumbers: [], balanceOddEven: true, sumRange: [100, 175], useLastWeekCarry: true 
+                balanceOddEven: true, sumRange: [100, 175], useLastWeekCarry: true 
             });
 
-            // 사용자님이 제공해주신 Firebase 설정값 적용
-            const getFirebaseConfig = () => {
-                if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-                    return JSON.parse(__firebase_config);
-                }
-                return {
-                    apiKey: "AIzaSyDgx9NCQiQn1dRm6fecK__pAoVFYN2d2q8",
-                    authDomain: "angellas.firebaseapp.com",
-                    projectId: "angellas",
-                    storageBucket: "angellas.firebasestorage.app",
-                    messagingSenderId: "520824812438",
-                    appId: "1:520824812438:web:182fd3231b94b9c58ce3b7",
-                    measurementId: "G-C9YF414D07"
-                };
+            const firebaseConfig = {
+                apiKey: "AIzaSyDgx9NCQiQn1dRm6fecK__pAoVFYN2d2q8",
+                authDomain: "angellas.firebaseapp.com",
+                projectId: "angellas",
+                storageBucket: "angellas.firebasestorage.app",
+                messagingSenderId: "520824812438",
+                appId: "1:520824812438:web:182fd3231b94b9c58ce3b7"
             };
 
-            const getAppId = () => typeof __app_id !== 'undefined' ? __app_id : 'angellas-lotto-pro';
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'angellas-lotto-pro-v6';
 
-            // 1. Firebase 초기화 및 인증
+            // 1. 초기화 및 인증
             useEffect(() => {
                 const init = async () => {
                     if (window.FirebaseSDK) {
                         try {
-                            const { initializeApp, getAuth, getFirestore, signInWithCustomToken, signInAnonymously, onAuthStateChanged } = window.FirebaseSDK;
-                            const config = getFirebaseConfig();
-                            
-                            const app = initializeApp(config);
+                            const { initializeApp, getAuth, getFirestore, signInAnonymously, onAuthStateChanged } = window.FirebaseSDK;
+                            const app = initializeApp(firebaseConfig);
                             const auth = getAuth(app);
                             const db = getFirestore(app);
                             setFb({ auth, db });
 
-                            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                                await signInWithCustomToken(auth, __initial_auth_token);
-                            } else {
-                                await signInAnonymously(auth);
-                            }
-
-                            onAuthStateChanged(auth, (currentUser) => {
-                                if (currentUser) {
-                                    setUser(currentUser);
-                                    setIsLoaded(true);
-                                }
-                            });
-                        } catch (err) {
-                            console.error("Initialization Error:", err);
-                            setError("Firebase 연결에 실패했습니다. 설정을 확인해 주세요.");
-                            setIsLoaded(true);
-                        }
+                            await signInAnonymously(auth);
+                            onAuthStateChanged(auth, (u) => { setUser(u); setIsLoaded(true); });
+                        } catch (err) { setError(err.message); setIsLoaded(true); }
                     }
                 };
-                
-                // SDK가 로드될 때까지 반복 확인
-                const timer = setInterval(() => { 
-                    if (window.FirebaseSDK) { 
-                        init(); 
-                        clearInterval(timer); 
-                    } 
-                }, 500);
-                
+                const timer = setInterval(() => { if (window.FirebaseSDK) { init(); clearInterval(timer); } }, 500);
                 return () => clearInterval(timer);
             }, []);
 
-            // 2. 실시간 데이터 수신 (오류 콜백 추가)
+            // 2. 실시간 데이터 수신 (공용 데이터 + 개인 저장 데이터)
             useEffect(() => {
                 if (!user || !fb.db) return;
                 const { collection, query, onSnapshot } = window.FirebaseSDK;
-                const appId = getAppId();
 
-                // 로또 데이터 수신
-                const unsubLotto = onSnapshot(
-                    query(collection(fb.db, 'artifacts', appId, 'public', 'data', 'lottoWinningNumbers')), 
-                    (s) => {
-                        setLottoWinningData(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => b.round - a.round));
-                    },
-                    (err) => {
-                        console.error("Lotto Snapshot Error:", err);
-                    }
-                );
+                // 공용 당첨 결과 수신
+                const unsubLotto = onSnapshot(query(collection(fb.db, 'artifacts', appId, 'public', 'data', 'lottoWinners')), (s) => {
+                    const data = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.round - a.round);
+                    setLottoWinningData(data);
+                    if (data.length > 0 && !selectedLottoId) setSelectedLottoId(data[0].id);
+                });
 
-                // 연금복권 데이터 수신
-                const unsubPension = onSnapshot(
-                    query(collection(fb.db, 'artifacts', appId, 'public', 'data', 'pensionWinningNumbers')), 
-                    (s) => {
-                        setPensionWinningData(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => b.round - a.round));
-                    },
-                    (err) => {
-                        console.error("Pension Snapshot Error:", err);
-                    }
-                );
+                const unsubPension = onSnapshot(query(collection(fb.db, 'artifacts', appId, 'public', 'data', 'pensionWinners')), (s) => {
+                    const data = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.round - a.round);
+                    setPensionWinningData(data);
+                    if (data.length > 0 && !selectedPensionId) setSelectedPensionId(data[0].id);
+                });
 
-                return () => { unsubLotto(); unsubPension(); };
+                // 개인 저장 목록 수신 (RULE 1: users/{userId} 경로 사용)
+                const unsubMyLotto = onSnapshot(query(collection(fb.db, 'artifacts', appId, 'users', user.uid, 'myLotto')), (s) => {
+                    setMySavedLotto(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.createdAt - a.createdAt));
+                });
+
+                const unsubMyPension = onSnapshot(query(collection(fb.db, 'artifacts', appId, 'users', user.uid, 'myPension')), (s) => {
+                    setMySavedPension(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.createdAt - a.createdAt));
+                });
+
+                return () => { unsubLotto(); unsubPension(); unsubMyLotto(); unsubMyPension(); };
             }, [user, fb.db]);
 
-            const addWinningData = async () => {
-                if (!user || !fb.db) return;
+            // 공용 데이터 저장 (관리자용)
+            const handleAdminSave = async () => {
+                if (!fb.db) return;
                 const { collection, addDoc } = window.FirebaseSDK;
-                const appId = getAppId();
-                
                 try {
                     if (activeTab === 'lotto') {
-                        const nums = newRoundNums.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n) && n >= 1 && n <= 45);
-                        if (nums.length !== 6) return alert("6개 숫자를 정확히 입력하세요.");
-                        const next = lottoWinningData.length > 0 ? Math.max(...lottoWinningData.map(d => d.round)) + 1 : 1;
-                        await addDoc(collection(fb.db, 'artifacts', appId, 'public', 'data', 'lottoWinningNumbers'), { 
-                            round: next, 
-                            numbers: nums.sort((a,b) => a-b), 
-                            timestamp: Date.now() 
+                        const nums = lottoInput.nums.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n));
+                        if (nums.length !== 6) return alert("6개 숫자를 입력하세요.");
+                        await addDoc(collection(fb.db, 'artifacts', appId, 'public', 'data', 'lottoWinners'), {
+                            round: parseInt(lottoInput.round), numbers: nums.sort((a, b) => a - b), timestamp: Date.now()
                         });
-                        setNewRoundNums("");
+                        setLottoInput({ round: "", nums: "" });
                     } else {
-                        const group = parseInt(newPensionGroup);
-                        const digits = newPensionNums.split('').map(n => parseInt(n)).filter(n => !isNaN(n));
-                        if (isNaN(group) || group < 1 || group > 5 || digits.length !== 6) return alert("조(1~5)와 번호 6자리를 확인하세요.");
-                        const next = pensionWinningData.length > 0 ? Math.max(...pensionWinningData.map(d => d.round)) + 1 : 1;
-                        await addDoc(collection(fb.db, 'artifacts', appId, 'public', 'data', 'pensionWinningNumbers'), { 
-                            round: next, 
-                            group, 
-                            digits, 
-                            timestamp: Date.now() 
+                        const digits = pensionInput.nums.split('').map(n => parseInt(n)).filter(n => !isNaN(n));
+                        if (digits.length !== 6) return alert("6자리 번호를 입력하세요.");
+                        await addDoc(collection(fb.db, 'artifacts', appId, 'public', 'data', 'pensionWinners'), {
+                            round: parseInt(pensionInput.round), group: parseInt(pensionInput.group), digits, timestamp: Date.now()
                         });
-                        setNewPensionGroup(""); setNewPensionNums("");
+                        setPensionInput({ round: "", group: "", nums: "" });
                     }
-                } catch (e) {
-                    console.error("Save Error:", e);
-                    alert("데이터 저장 권한이 없거나 오류가 발생했습니다.");
-                }
+                    alert("공용 데이터가 업데이트되었습니다.");
+                } catch (e) { alert("저장 실패: " + e.message); }
             };
 
-            const deleteData = async (id) => {
-                if (!fb.db) return;
+            // 개인 번호 저장 기능
+            const saveMyNumbers = async (type, data) => {
+                if (!user || !fb.db) return;
+                const { collection, addDoc } = window.FirebaseSDK;
+                try {
+                    const colName = type === 'lotto' ? 'myLotto' : 'myPension';
+                    const payload = type === 'lotto' 
+                        ? { sets: data, round: lottoWinningData[0]?.round || "미지정", createdAt: Date.now() }
+                        : { ...data, round: pensionWinningData[0]?.round || "미지정", createdAt: Date.now() };
+                    
+                    await addDoc(collection(fb.db, 'artifacts', appId, 'users', user.uid, colName), payload);
+                    alert("나의 저장소에 번호가 보관되었습니다!");
+                } catch (e) { alert("저장 중 오류 발생: " + e.message); }
+            };
+
+            const deleteItem = async (id, col, isPublic = false) => {
                 const { doc, deleteDoc } = window.FirebaseSDK;
-                const col = activeTab === 'lotto' ? 'lottoWinningNumbers' : 'pensionWinningNumbers';
-                await deleteDoc(doc(fb.db, 'artifacts', getAppId(), 'public', 'data', col, id));
+                const path = isPublic 
+                    ? doc(fb.db, 'artifacts', appId, 'public', 'data', col, id)
+                    : doc(fb.db, 'artifacts', appId, 'users', user.uid, col, id);
+                await deleteDoc(path);
             };
 
-            const generateLotto = () => {
-                let attempts = 0; const last = lottoWinningData[0];
-                while (attempts < 500) {
-                    let nums = new Set(options.includeFixed);
-                    if (options.useLastWeekCarry && last) {
-                        const carry = Math.floor(Math.random() * 2) + 1;
-                        [...last.numbers].sort(() => Math.random()-0.5).slice(0, carry).forEach(n => { if(!options.excludeNumbers.includes(n)) nums.add(n) });
+            // 추출 로직
+            const runExtraction = () => {
+                if (activeTab === 'lotto') {
+                    const newSets = [];
+                    for(let s = 0; s < lottoSetsCount; s++) {
+                        let attempts = 0;
+                        const last = lottoWinningData[0];
+                        while (attempts < 100) {
+                            let nums = new Set();
+                            if (options.useLastWeekCarry && last) {
+                                const carry = Math.floor(Math.random() * 2) + 1;
+                                [...last.numbers].sort(() => Math.random() - 0.5).slice(0, carry).forEach(n => nums.add(n));
+                            }
+                            while (nums.size < 6) { nums.add(Math.floor(Math.random() * 45) + 1); }
+                            const final = Array.from(nums).sort((a, b) => a - b);
+                            const sum = final.reduce((a, b) => a + b, 0);
+                            const odd = final.filter(n => n % 2 !== 0).length;
+                            if (sum >= options.sumRange[0] && sum <= options.sumRange[1] && (!options.balanceOddEven || (odd >= 2 && odd <= 4))) {
+                                newSets.push(final);
+                                break;
+                            }
+                            attempts++;
+                        }
                     }
-                    while (nums.size < 6) { let n = Math.floor(Math.random()*45)+1; if(!options.excludeNumbers.includes(n)) nums.add(n); }
-                    const final = Array.from(nums).sort((a,b) => a-b);
-                    if (last && JSON.stringify(final) === JSON.stringify(last.numbers)) { attempts++; continue; }
-                    const sum = final.reduce((a,b) => a+b, 0); const odd = final.filter(n => n%2!==0).length;
-                    if (sum >= options.sumRange[0] && sum <= options.sumRange[1] && (!options.balanceOddEven || (odd >= 2 && odd <= 4))) {
-                        setGeneratedNumbers(final);
-                        setLottoHistory(prev => [{ numbers: final, timestamp: new Date().toLocaleTimeString(), sum, odd, even: 6-odd }, ...prev.slice(0, 9)]);
-                        return;
-                    }
-                    attempts++;
+                    setGeneratedLottoSets(newSets);
+                } else {
+                    const result = { group: Math.floor(Math.random() * 5) + 1, digits: Array.from({ length: 6 }, () => Math.floor(Math.random() * 10)) };
+                    setGeneratedPension(result);
                 }
-            };
-
-            const generatePension = () => {
-                const group = Math.floor(Math.random()*5)+1;
-                const digits = Array.from({length:6}, () => Math.floor(Math.random()*10));
-                setPensionResult({ group, digits });
-                setPensionHistory(prev => [{ group, digits, timestamp: new Date().toLocaleTimeString() }, ...prev.slice(0,9)]);
             };
 
             const getBallColor = (n) => n <= 10 ? 'bg-yellow-400' : n <= 20 ? 'bg-blue-400' : n <= 30 ? 'bg-red-400' : n <= 40 ? 'bg-gray-400' : 'bg-green-400';
 
-            if (error) return (
-                <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center bg-slate-50">
-                    <i className="lucide-alert-circle text-rose-500 w-16 h-16 mb-4"></i>
-                    <h1 className="text-2xl font-black mb-2">설정 확인 필요</h1>
-                    <p className="text-slate-600 mb-6">{error}</p>
-                    <div className="bg-white p-4 rounded-2xl shadow-sm text-left text-xs text-slate-500 mb-6 border border-slate-200">
-                        <p className="font-bold mb-2">Firebase 콘솔에서 다음을 확인하세요:</p>
-                        <ol className="list-decimal ml-4 space-y-1">
-                            <li><strong>Authentication:</strong> '익명(Anonymous)' 로그인 활성화</li>
-                            <li><strong>Firestore Database:</strong> 데이터베이스 생성 (위치: asia-northeast3 권장)</li>
-                            <li><strong>Firestore Rules:</strong> 테스트 모드로 시작하거나 쓰기 권한 허용</li>
-                        </ol>
-                    </div>
-                    <button onClick={() => window.location.reload()} className="px-8 py-3 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all">다시 시도하기</button>
-                </div>
-            );
+            if (!isLoaded) return <div className="min-h-screen flex items-center justify-center text-slate-400 animate-pulse font-bold">Angellas Cloud Syncing...</div>;
 
-            if (!isLoaded) return (
-                <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
-                    <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-                    <p className="font-black text-slate-400 uppercase tracking-widest animate-pulse">Initializing System...</p>
-                </div>
-            );
+            const displayLotto = lottoWinningData.find(d => d.id === selectedLottoId) || lottoWinningData[0];
+            const displayPension = pensionWinningData.find(d => d.id === selectedPensionId) || pensionWinningData[0];
 
             return (
                 <div className="max-w-6xl mx-auto p-4 md:p-8 animate-in fade-in duration-700">
-                    {/* 상단 네비게이션 */}
-                    <div className="flex flex-col md:flex-row justify-between items-center mb-10 gap-4">
-                        <div className="bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 flex overflow-hidden">
-                            <button onClick={() => {setActiveTab('lotto'); setShowAdmin(false);}} className={`px-10 py-3 rounded-xl font-black transition-all ${activeTab === 'lotto' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'}`}>로또 6/45</button>
-                            <button onClick={() => {setActiveTab('pension'); setShowAdmin(false);}} className={`px-10 py-3 rounded-xl font-black transition-all ${activeTab === 'pension' ? 'bg-purple-600 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'}`}>연금복권</button>
+                    {/* 상단 탭 */}
+                    <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+                        <div className="bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 flex">
+                            <button onClick={() => {setActiveTab('lotto'); setShowAdmin(false);}} className={`px-8 py-3 rounded-xl font-black tab-transition ${activeTab === 'lotto' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'}`}>로또 6/45</button>
+                            <button onClick={() => {setActiveTab('pension'); setShowAdmin(false);}} className={`px-8 py-3 rounded-xl font-black tab-transition ${activeTab === 'pension' ? 'bg-purple-600 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'}`}>연금복권</button>
                         </div>
-                        <button onClick={() => setShowAdmin(!showAdmin)} className={`flex items-center gap-2 px-6 py-3 rounded-xl text-xs font-black transition-all border shadow-sm ${showAdmin ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'}`}>
-                            <i className="lucide-database w-4 h-4"></i> 데이터 관리 {activeTab === 'lotto' ? `(${lottoWinningData.length})` : `(${pensionWinningData.length})`}
+                        <button onClick={() => setShowAdmin(!showAdmin)} className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:border-indigo-300">
+                            <i className="lucide-database w-4 h-4"></i> 당첨 데이터 관리
                         </button>
                     </div>
 
                     {/* 관리자 패널 */}
                     {showAdmin && (
-                        <div className="mb-10 bg-white rounded-3xl p-6 shadow-xl border-2 border-indigo-100 animate-in slide-in-from-top-4 duration-300">
-                            <h3 className={`font-black mb-4 flex items-center gap-2 uppercase tracking-tight ${activeTab === 'lotto' ? 'text-indigo-900' : 'text-purple-900'}`}>
-                                <i className="lucide-plus-circle w-5 h-5"></i>
-                                {activeTab === 'lotto' ? '주간 로또 당첨 데이터 누적' : '주간 연금복권 당첨 데이터 누적'}
-                            </h3>
-                            <div className="flex flex-col md:flex-row gap-2 mb-6">
-                                {activeTab === 'lotto' ? (
-                                    <input type="text" placeholder="로또 번호 6개 (예: 1, 5, 12, 23, 31, 45)" value={newRoundNums} onChange={(e) => setNewRoundNums(e.target.value)} className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold shadow-inner focus:ring-2 focus:ring-indigo-500" />
-                                ) : (
-                                    <div className="flex flex-1 gap-2">
-                                        <input type="number" placeholder="조" value={newPensionGroup} onChange={(e) => setNewPensionGroup(e.target.value)} className="w-20 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-center shadow-inner" />
-                                        <input type="text" placeholder="번호 6자리 (예: 123456)" value={newPensionNums} onChange={(e) => setNewPensionNums(e.target.value)} className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold shadow-inner" />
-                                    </div>
-                                )}
-                                <button onClick={addWinningData} className={`px-10 py-3 text-white rounded-xl font-black shadow-md transition-all ${activeTab === 'lotto' ? 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100' : 'bg-purple-600 hover:bg-purple-700 shadow-purple-100'}`}>DB 저장</button>
-                            </div>
-                            <div className="max-h-48 overflow-y-auto custom-scrollbar border-t pt-4">
-                                <p className="text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">저장된 기록 (최신순)</p>
+                        <div className="mb-8 bg-white rounded-3xl p-6 shadow-xl border-2 border-indigo-100 animate-in slide-in-from-top-4 duration-300">
+                            <h3 className="font-black text-indigo-900 mb-4 flex items-center gap-2 uppercase">공용 데이터 업데이트</h3>
+                            {activeTab === 'lotto' ? (
+                                <div className="flex flex-col md:flex-row gap-2 mb-4">
+                                    <input type="number" placeholder="로또 회차" value={lottoInput.round} onChange={(e) => setLottoInput({...lottoInput, round: e.target.value})} className="w-24 px-4 py-3 bg-slate-50 border rounded-xl text-sm font-bold" />
+                                    <input type="text" placeholder="번호 (1, 5, 23...)" value={lottoInput.nums} onChange={(e) => setLottoInput({...lottoInput, nums: e.target.value})} className="flex-1 px-4 py-3 bg-slate-50 border rounded-xl text-sm font-bold" />
+                                    <button onClick={handleAdminSave} className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold">저장</button>
+                                </div>
+                            ) : (
+                                <div className="flex flex-col md:flex-row gap-2 mb-4">
+                                    <input type="number" placeholder="연금 회차" value={pensionInput.round} onChange={(e) => setPensionInput({...pensionInput, round: e.target.value})} className="w-24 px-4 py-3 bg-slate-50 border rounded-xl text-sm font-bold" />
+                                    <input type="number" placeholder="조" value={pensionInput.group} onChange={(e) => setPensionInput({...pensionInput, group: e.target.value})} className="w-20 px-4 py-3 bg-slate-50 border rounded-xl text-sm font-bold text-center" />
+                                    <input type="text" placeholder="6자리 번호 (123456)" value={pensionInput.nums} onChange={(e) => setPensionInput({...pensionInput, nums: e.target.value})} className="flex-1 px-4 py-3 bg-slate-50 border rounded-xl text-sm font-bold" />
+                                    <button onClick={handleAdminSave} className="px-8 py-3 bg-purple-600 text-white rounded-xl font-bold">저장</button>
+                                </div>
+                            )}
+                            <div className="max-h-24 overflow-y-auto custom-scrollbar border-t pt-2 space-y-1">
                                 {(activeTab === 'lotto' ? lottoWinningData : pensionWinningData).map(d => (
-                                    <div key={d.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl text-xs font-bold border border-slate-100 group mb-1 hover:bg-white transition-all">
-                                        <div className="flex items-center gap-3">
-                                            <span className={activeTab === 'lotto' ? 'text-indigo-600' : 'text-purple-600'}>[{d.round}회]</span>
-                                            <span className="text-slate-700 tracking-widest font-black">{activeTab === 'lotto' ? d.numbers.join(', ') : `${d.group}조 ${d.digits.join('')}`}</span>
-                                        </div>
-                                        <button onClick={() => deleteData(d.id)} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"><i className="lucide-trash-2 w-4 h-4"></i></button>
+                                    <div key={d.id} className="flex justify-between items-center p-2 bg-slate-50 rounded-lg text-[11px] font-bold border border-slate-100">
+                                        <span>[{d.round}회] {activeTab === 'lotto' ? d.numbers.join(', ') : `${d.group}조 ${d.digits.join('')}`}</span>
+                                        <button onClick={() => deleteItem(d.id, activeTab === 'lotto' ? 'lottoWinners' : 'pensionWinners', true)} className="text-slate-300 hover:text-red-500"><i className="lucide-trash-2 w-3 h-3"></i></button>
                                     </div>
                                 ))}
                             </div>
@@ -302,88 +263,167 @@
                     )}
 
                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                        {/* 메인 추출 카드 */}
-                        <div className="lg:col-span-8 space-y-8">
-                            <div className="bg-white rounded-[3rem] p-12 shadow-2xl border border-slate-100 flex flex-col items-center relative overflow-hidden">
-                                <div className="absolute top-0 right-0 p-6 opacity-5 pointer-events-none">
-                                    <i className="lucide-sparkles w-48 h-48"></i>
+                        <div className="lg:col-span-8 space-y-6">
+                            {/* 최근 당첨 정보 표시 */}
+                            <div className="bg-slate-900 rounded-[2rem] p-6 shadow-2xl border border-slate-800 relative">
+                                <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+                                    <div className="text-left w-full md:w-auto">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <span className="px-2 py-0.5 bg-yellow-500 text-slate-900 text-[9px] font-black rounded uppercase animate-pulse">Winner Info</span>
+                                            <select 
+                                                value={activeTab === 'lotto' ? selectedLottoId : selectedPensionId}
+                                                onChange={(e) => activeTab === 'lotto' ? setSelectedLottoId(e.target.value) : setSelectedPensionId(e.target.value)}
+                                                className="bg-slate-800 text-white text-[11px] font-bold border-none rounded-lg px-2 py-1 outline-none focus:ring-1 focus:ring-yellow-500"
+                                            >
+                                                {(activeTab === 'lotto' ? lottoWinningData : pensionWinningData).map(d => (
+                                                    <option key={d.id} value={d.id}>{d.round}회차 결과 보기</option>
+                                                ))}
+                                                {(activeTab === 'lotto' ? lottoWinningData : pensionWinningData).length === 0 && <option value="">데이터 없음</option>}
+                                            </select>
+                                        </div>
+                                        <h4 className="text-white font-bold text-sm">
+                                            {activeTab === 'lotto' ? (displayLotto ? `${displayLotto.round}회차 당첨 번호` : '정보 없음') : (displayPension ? `${displayPension.round}회차 당첨 번호` : '정보 없음')}
+                                        </h4>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        {activeTab === 'lotto' ? (
+                                            displayLotto?.numbers.map((n, i) => (
+                                                <div key={i} className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-black ball-shadow ${getBallColor(n)}`}>{n}</div>
+                                            ))
+                                        ) : (
+                                            displayPension && <div className="flex items-center gap-2">
+                                                <span className="text-purple-400 font-black text-sm">{displayPension.group}조</span>
+                                                <div className="flex gap-1">{displayPension.digits.map((d, i) => <div key={i} className="w-7 h-10 bg-slate-800 border border-slate-700 rounded-lg flex items-center justify-center text-white font-bold text-sm">{d}</div>)}</div>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
+                            </div>
+
+                            {/* 추출 영역 */}
+                            <div className="bg-white rounded-[3rem] p-10 shadow-xl border border-slate-100 flex flex-col items-center relative">
                                 {activeTab === 'lotto' ? (
-                                    <div className="w-full text-center relative z-10">
-                                        <div className="flex flex-wrap justify-center gap-4 mb-14">
-                                            {(generatedNumbers.length > 0 ? generatedNumbers : [0,0,0,0,0,0]).map((num, idx) => (
-                                                <div key={idx} className={`${num ? getBallColor(num) : 'bg-slate-50 border-2 border-dashed border-slate-200 text-slate-200'} w-14 h-14 md:w-20 md:h-20 rounded-full flex items-center justify-center text-white text-2xl md:text-4xl font-black shadow-lg ball-shadow transition-all transform hover:scale-110 duration-500`}>
-                                                    {num || '?'}
+                                    <div className="w-full text-center">
+                                        {/* 세트 수 선택 */}
+                                        <div className="flex items-center justify-center gap-3 mb-8">
+                                            <span className="text-xs font-black text-slate-400 uppercase tracking-tighter">추출 세트 선택</span>
+                                            <div className="flex bg-slate-100 p-1 rounded-xl">
+                                                {[1, 2, 3, 4, 5].map(n => (
+                                                    <button key={n} onClick={() => setLottoSetsCount(n)} className={`w-8 h-8 rounded-lg text-xs font-black transition-all ${lottoSetsCount === n ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>{n}</button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="space-y-6 mb-12">
+                                            {(generatedLottoSets.length > 0 ? generatedLottoSets : [Array(6).fill(0)]).map((set, sIdx) => (
+                                                <div key={sIdx} className="flex flex-wrap justify-center gap-3 animate-in zoom-in-95 duration-300">
+                                                    {set.map((num, idx) => (
+                                                        <div key={idx} className={`${num ? getBallColor(num) : 'bg-slate-50 border-2 border-dashed border-slate-200 text-slate-300'} w-12 h-12 md:w-16 md:h-16 rounded-full flex items-center justify-center text-white text-xl md:text-2xl font-black shadow-lg transition-all transform hover:scale-110`}>{num || '?'}</div>
+                                                    ))}
                                                 </div>
                                             ))}
                                         </div>
-                                        <button onClick={generateLotto} className="px-20 py-7 bg-indigo-600 hover:bg-indigo-700 text-white rounded-[2.5rem] font-black text-2xl shadow-2xl shadow-indigo-200 flex items-center gap-3 mx-auto active:scale-95 transition-all">
-                                            행운 번호 추출
-                                        </button>
+                                        
+                                        <div className="flex flex-col items-center gap-4">
+                                            <button onClick={runExtraction} className="w-full max-w-md py-6 bg-indigo-600 hover:bg-indigo-700 text-white rounded-[2rem] font-black text-2xl shadow-xl flex items-center justify-center gap-3 mx-auto active:scale-95 transition-all">
+                                                <i className="lucide-sparkles w-7 h-7 text-yellow-300"></i>
+                                                <span>로또 번호 추출</span>
+                                            </button>
+                                            {generatedLottoSets.length > 0 && (
+                                                <button onClick={() => saveMyNumbers('lotto', generatedLottoSets)} className="flex items-center gap-2 text-indigo-600 font-bold text-sm hover:underline">
+                                                    <i className="lucide-save w-4 h-4"></i> 이 번호들을 나의 저장소에 보관하기
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                 ) : (
-                                    <div className="w-full text-center relative z-10">
-                                        <div className="flex flex-wrap justify-center items-center gap-8 mb-14">
+                                    <div className="w-full text-center">
+                                        <div className="flex flex-wrap justify-center items-center gap-8 mb-12">
                                             <div className="flex flex-col items-center">
-                                                <span className="text-xs font-black text-purple-400 mb-2 uppercase tracking-widest italic">Group</span>
-                                                <div className="w-18 h-28 bg-purple-600 rounded-3xl flex items-center justify-center text-white text-6xl font-black shadow-xl ball-shadow">{pensionResult ? pensionResult.group : '?'}</div>
+                                                <span className="text-xs font-black text-purple-400 mb-2">조</span>
+                                                <div className="w-16 h-24 bg-purple-600 rounded-3xl flex items-center justify-center text-white text-5xl font-black shadow-lg">{generatedPension ? generatedPension.group : '?'}</div>
                                             </div>
                                             <div className="flex flex-col items-center">
-                                                <span className="text-xs font-black text-slate-400 mb-2 uppercase tracking-widest italic">Numbers</span>
-                                                <div className="flex gap-2">
-                                                    {(pensionResult ? pensionResult.digits : [0,0,0,0,0,0]).map((d, i) => (
-                                                        <div key={i} className={`w-12 h-20 md:w-16 md:h-24 ${pensionResult ? 'bg-slate-800 shadow-xl' : 'bg-slate-50 border-2 border-dashed border-slate-200 text-slate-200'} rounded-3xl flex items-center justify-center text-white text-4xl font-black transition-all`}>{pensionResult ? d : '?'}</div>
-                                                    ))}
-                                                </div>
+                                                <span className="text-xs font-black text-slate-400 mb-2">번호</span>
+                                                <div className="flex gap-2">{(generatedPension ? generatedPension.digits : [0,0,0,0,0,0]).map((d, i) => (<div key={i} className={`w-10 h-16 md:w-14 md:h-22 ${generatedPension ? 'bg-slate-800 shadow-xl' : 'bg-slate-50 border-2 border-dashed border-slate-200 text-slate-200'} rounded-2xl flex items-center justify-center text-white text-3xl font-black transition-all`}>{generatedPension ? d : '?'}</div>))}</div>
                                             </div>
                                         </div>
-                                        <button onClick={generatePension} className="px-20 py-7 bg-purple-600 hover:bg-purple-700 text-white rounded-[2.5rem] font-black text-2xl shadow-2xl shadow-purple-200 flex items-center gap-3 mx-auto active:scale-95 transition-all">
-                                            연금 번호 추출
-                                        </button>
+                                        <div className="flex flex-col items-center gap-4">
+                                            <button onClick={runExtraction} className="w-full max-w-md py-6 bg-purple-600 hover:bg-purple-700 text-white rounded-[2rem] font-black text-2xl shadow-xl flex items-center justify-center gap-3 mx-auto active:scale-95 transition-all">
+                                                <i className="lucide-zap w-7 h-7 text-yellow-300"></i>
+                                                <span>연금 번호 추출</span>
+                                            </button>
+                                            {generatedPension && (
+                                                <button onClick={() => saveMyNumbers('pension', generatedPension)} className="flex items-center gap-2 text-purple-600 font-bold text-sm hover:underline">
+                                                    <i className="lucide-save w-4 h-4"></i> 이 번호를 나의 저장소에 보관하기
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                 )}
                             </div>
+                        </div>
 
-                            {/* 데이터 분석 리포트 */}
-                            <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-100 p-10 animate-in slide-in-from-bottom-4 duration-500">
-                                <h3 className={`text-xl font-black mb-10 border-b border-slate-50 pb-6 flex items-center gap-3 uppercase tracking-tighter ${activeTab === 'lotto' ? 'text-indigo-900' : 'text-purple-900'}`}>
-                                    <i className="lucide-bar-chart-2 w-7 h-7"></i> 실시간 누적 데이터 분석 리포트
-                                </h3>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                                    <div className={`p-8 rounded-[2rem] border ${activeTab === 'lotto' ? 'bg-indigo-50/50 border-indigo-100' : 'bg-purple-50/50 border-purple-100'}`}>
-                                        <p className="text-xs font-black mb-6 uppercase tracking-widest opacity-70 italic tracking-widest">Hot Pick Top 5</p>
-                                        <div className="space-y-5">
-                                            {(() => {
-                                                const currentData = activeTab === 'lotto' ? lottoWinningData : pensionWinningData;
-                                                const counts = {};
-                                                currentData.forEach(d => (activeTab === 'lotto' ? d.numbers : d.digits).forEach(n => counts[n] = (counts[n] || 0) + 1));
-                                                const topFive = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 5);
-                                                if (currentData.length === 0) return <p className="text-xs font-bold text-slate-300 py-6 uppercase tracking-widest text-center">No Data in Cloud</p>;
-                                                return topFive.map(([num, count]) => (
-                                                    <div key={num} className="flex items-center justify-between font-bold group">
-                                                        <span className={`w-9 h-9 rounded-full ${activeTab === 'lotto' ? getBallColor(parseInt(num)) : 'bg-slate-800'} text-white flex items-center justify-center text-xs shadow-sm font-black transform group-hover:scale-110 transition-all`}>{num}</span>
-                                                        <div className="flex-1 mx-5 h-2 bg-white rounded-full overflow-hidden shadow-inner">
-                                                            <div style={{width: `${(count/currentData.length)*100}%`}} className={`h-full ${activeTab === 'lotto' ? 'bg-indigo-600' : 'bg-purple-600'}`}></div>
-                                                        </div>
-                                                        <span className={`${activeTab === 'lotto' ? 'text-indigo-600' : 'text-purple-600'} font-black text-xs`}>{count}회</span>
-                                                    </div>
-                                                ));
-                                            })()}
-                                        </div>
-                                    </div>
-                                    <div className="bg-slate-50 p-8 rounded-[2rem] border border-slate-100 space-y-5 flex flex-col justify-center shadow-inner">
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center mb-4">Algorithm Status</p>
-                                        <div className="space-y-4 text-xs font-bold text-slate-600">
-                                            <div className="flex items-center gap-3"><i className="lucide-check-circle-2 text-green-500 w-5 h-5"></i> <span>최근 {activeTab === 'lotto' ? lottoWinningData.length : pensionWinningData.length}회차 데이터 학습 완료</span></div>
-                                            <div className="flex items-center gap-3"><i className="lucide-check-circle-2 text-green-500 w-5 h-5"></i> <span>이월수 자동 분석 엔진 작동 중</span></div>
-                                            <div className="flex items-center gap-3"><i className="lucide-check-circle-2 text-green-500 w-5 h-5"></i> <span>클라우드 서버 실시간 연동 중</span></div>
-                                        </div>
+                        {/* 사이드바: 설정 및 저장 목록 */}
+                        <div className="lg:col-span-4 space-y-6">
+                            <div className="bg-white rounded-[2rem] shadow-xl border border-slate-100 p-6">
+                                <h3 className="font-black text-slate-800 flex items-center gap-2 pb-4 border-b border-slate-50 mb-4"><i className="lucide-settings-2 text-indigo-600"></i> 설정</h3>
+                                <div className="space-y-6">
+                                    <label className="flex items-center justify-between p-4 bg-indigo-50 rounded-2xl cursor-pointer hover:border-indigo-200 border-2 border-transparent transition-all">
+                                        <div className="flex flex-col"><span className="text-sm font-black text-indigo-900 leading-tight">전주 번호 반영</span><span className="text-[10px] text-indigo-600 font-bold">1~2개 자동 포함</span></div>
+                                        <button onClick={() => setOptions({...options, useLastWeekCarry: !options.useLastWeekCarry})} className={`w-12 h-6 rounded-full relative transition-colors ${options.useLastWeekCarry ? 'bg-indigo-600' : 'bg-slate-300'}`}><div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${options.useLastWeekCarry ? 'left-7' : 'left-1'}`}></div></button>
+                                    </label>
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between items-center text-[10px] font-black text-slate-400 uppercase"><span>합계 범위 (100~{options.sumRange[1]})</span></div>
+                                        <input type="range" min="100" max="220" value={options.sumRange[1]} onChange={(e) => setOptions({...options, sumRange: [100, parseInt(e.target.value)]})} className="h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer" />
                                     </div>
                                 </div>
                             </div>
-                        </div>
 
-                        {/* 우측 사이드바 */}
-                        <div className="lg:col-span-4 space-y-8">
-                            <div className="bg-white rounded-[2rem] shadow-xl border border-slate-100 p-8 space-y-8">
-                                <h3 className="font-black text-slate-80
+                            {/* [요청사항] 나의 저장소 목록 */}
+                            <div className="bg-white rounded-[2rem] shadow-xl border border-slate-100 p-6 overflow-hidden">
+                                <h3 className="font-black text-slate-800 mb-4 pb-4 border-b flex items-center gap-2 italic uppercase">
+                                    <i className="lucide-heart text-rose-500 w-5 h-5"></i> My Saved {activeTab === 'lotto' ? 'Lotto' : 'Pension'}
+                                </h3>
+                                <div className="space-y-3 max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
+                                    {(activeTab === 'lotto' ? mySavedLotto : mySavedPension).length > 0 ? (activeTab === 'lotto' ? mySavedLotto : mySavedPension).map((item, idx) => (
+                                        <div key={item.id} className="p-4 bg-slate-50 rounded-2xl text-[10px] space-y-2 border border-slate-100 group hover:bg-white transition-all shadow-sm">
+                                            <div className="flex justify-between items-center border-b border-slate-100 pb-2 mb-2">
+                                                <span className="font-black text-indigo-600">[{item.round}회차 기준 저장]</span>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-[9px] text-slate-400 font-bold italic">{new Date(item.createdAt).toLocaleString()}</span>
+                                                    <button onClick={() => deleteItem(item.id, activeTab === 'lotto' ? 'myLotto' : 'myPension')} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"><i className="lucide-trash-2 w-3 h-3"></i></button>
+                                                </div>
+                                            </div>
+                                            {activeTab === 'lotto' ? (
+                                                <div className="space-y-1.5">
+                                                    {item.sets.map((set, si) => (
+                                                        <div key={si} className="flex gap-1 flex-wrap">
+                                                            {set.map((n, ni) => <span key={ni} className="w-5 h-5 rounded-full flex items-center justify-center bg-white border border-slate-200 text-slate-700 font-black text-[8px]">{n}</span>)}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-purple-600 font-black px-2 bg-purple-100 rounded-lg">{item.group}조</span>
+                                                    <span className="font-black text-slate-700 tracking-widest text-[11px]">{item.digits.join('')}</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )) : <p className="text-center text-slate-300 text-[11px] py-20 font-bold uppercase tracking-widest">저장된 번호가 없습니다.</p>}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <footer className="mt-16 text-center text-slate-300 text-[10px] font-bold uppercase tracking-[0.3em] italic">
+                        Lotto & Pension Cloud Pro Analyzer v6.0
+                    </footer>
+                </div>
+            );
+        };
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
