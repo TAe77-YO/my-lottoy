@@ -52,7 +52,7 @@
             appId: "1:520824812438:web:182fd3231b94b9c58ce3b7"
         };
 
-        // 데이터 경로 일관성을 위해 appId 고정 (이전에 데이터가 안보였던 이유)
+        // 데이터 경로 일관성을 위해 appId 고정
         const appId = "angellas-lotto-pro-app";
 
         const App = () => {
@@ -131,14 +131,14 @@
                 if (!user || !fb.db) return;
                 const { collection, query, onSnapshot } = window.FirebaseSDK;
 
-                // 로또 공용 결과
+                // 로또 공용 결과 수신
                 const unsubLotto = onSnapshot(query(collection(fb.db, 'artifacts', appId, 'public', 'data', 'lottoWinners')), (s) => {
                     const data = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.round - a.round);
                     setLottoWinningData(data);
                     if (data.length > 0 && !selectedLottoId) setSelectedLottoId(data[0].id);
                 }, (err) => console.error(err));
 
-                // 연금 공용 결과
+                // 연금 공용 결과 수신
                 const unsubPension = onSnapshot(query(collection(fb.db, 'artifacts', appId, 'public', 'data', 'pensionWinners')), (s) => {
                     const data = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.round - a.round);
                     setPensionWinningData(data);
@@ -186,15 +186,23 @@
                 } catch (e) { alert("저장 실패: " + e.message); }
             };
 
-            // 개인 번호 보관
+            // 개인 번호 보관 (JSON 직렬화 적용 - 중첩 배열 오류 해결)
             const saveToMyStorage = async (type, data) => {
                 if (!user || !fb.db) return;
                 const { collection, addDoc } = window.FirebaseSDK;
                 try {
                     const colName = type === 'lotto' ? 'myLotto' : 'myPension';
                     const payload = type === 'lotto' 
-                        ? { sets: data, round: lottoWinningData[0]?.round || "최신", createdAt: Date.now() }
-                        : { ...data, round: pensionWinningData[0]?.round || "최신", createdAt: Date.now() };
+                        ? { 
+                            sets: JSON.stringify(data), // 중첩 배열을 문자열로 변환하여 저장
+                            round: lottoWinningData[0]?.round || "최신", 
+                            createdAt: Date.now() 
+                          }
+                        : { 
+                            ...data, 
+                            round: pensionWinningData[0]?.round || "최신", 
+                            createdAt: Date.now() 
+                          };
                     
                     await addDoc(collection(fb.db, 'artifacts', appId, 'users', user.uid, colName), payload);
                     alert("나만의 저장소에 행운의 번호가 저장되었습니다!");
@@ -245,7 +253,7 @@
                 <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center bg-slate-50">
                     <i className="lucide-alert-triangle text-rose-500 w-16 h-16 mb-4"></i>
                     <h1 className="text-2xl font-black text-slate-800 mb-2">시스템 오류</h1>
-                    <p className="text-slate-500 max-w-md mb-6">{error}</p>
+                    <p className="text-slate-500 max-w-md mb-6 whitespace-pre-wrap">{error}</p>
                     <button onClick={() => window.location.reload()} className="px-8 py-3 bg-indigo-600 text-white rounded-2xl font-bold">새로고침</button>
                 </div>
             );
@@ -428,33 +436,43 @@
                                     <i className="lucide-heart text-rose-500 w-4 h-4"></i> MY CLOUD REPOSITORY
                                 </h3>
                                 <div className="space-y-4 overflow-y-auto custom-scrollbar pr-2 pb-4">
-                                    {(activeTab === 'lotto' ? mySavedLotto : mySavedPension).length > 0 ? (activeTab === 'lotto' ? mySavedLotto : mySavedPension).map((item) => (
-                                        <div key={item.id} className="p-4 bg-slate-50 rounded-[2rem] space-y-3 border border-slate-100 group hover:bg-white transition-all shadow-sm">
-                                            <div className="flex justify-between items-start border-b border-slate-100 pb-2">
-                                                <div className="flex flex-col">
-                                                    <span className="font-black text-indigo-600 text-[10px]">[{item.round}회 기준 추출]</span>
-                                                    <span className="text-[9px] text-slate-400 font-bold italic">{new Date(item.createdAt).toLocaleString()}</span>
-                                                </div>
-                                                <button onClick={() => deleteDocItem(item.id, activeTab === 'lotto' ? 'myLotto' : 'myPension')} className="p-1.5 text-slate-300 hover:text-rose-500 transition-all"><i className="lucide-trash-2 w-3.5 h-3.5"></i></button>
-                                            </div>
-                                            {activeTab === 'lotto' ? (
-                                                <div className="space-y-1.5">
-                                                    {item.sets.map((set, si) => (
-                                                        <div key={si} className="flex gap-1 flex-wrap">
-                                                            {set.map((n, ni) => <span key={ni} className={`w-5 h-5 rounded-full flex items-center justify-center text-white font-black text-[8px] shadow-sm ${getBallColor(n)}`}>{n}</span>)}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            ) : (
-                                                <div className="flex items-center gap-3">
-                                                    <span className="text-purple-600 font-black px-2 py-0.5 bg-purple-100 rounded-lg text-[10px]">{item.group}조</span>
-                                                    <div className="flex gap-1">
-                                                        {item.digits.map((d, di) => <span key={di} className="w-5 h-7 bg-slate-800 rounded-md flex items-center justify-center text-white font-black text-[10px]">{d}</span>)}
+                                    {(activeTab === 'lotto' ? mySavedLotto : mySavedPension).length > 0 ? (activeTab === 'lotto' ? mySavedLotto : mySavedPension).map((item) => {
+                                        // 저장된 데이터를 파싱하거나 객체 그대로 사용
+                                        let sets = [];
+                                        if (activeTab === 'lotto' && item.sets) {
+                                            try {
+                                                sets = typeof item.sets === 'string' ? JSON.parse(item.sets) : item.sets;
+                                            } catch (e) { console.error("Parse Error", e); }
+                                        }
+
+                                        return (
+                                            <div key={item.id} className="p-4 bg-slate-50 rounded-[2rem] space-y-3 border border-slate-100 group hover:bg-white transition-all shadow-sm">
+                                                <div className="flex justify-between items-start border-b border-slate-100 pb-2">
+                                                    <div className="flex flex-col">
+                                                        <span className="font-black text-indigo-600 text-[10px]">[{item.round}회 기준 추출]</span>
+                                                        <span className="text-[9px] text-slate-400 font-bold italic">{new Date(item.createdAt).toLocaleString()}</span>
                                                     </div>
+                                                    <button onClick={() => deleteDocItem(item.id, activeTab === 'lotto' ? 'myLotto' : 'myPension')} className="p-1.5 text-slate-300 hover:text-rose-500 transition-all"><i className="lucide-trash-2 w-3.5 h-3.5"></i></button>
                                                 </div>
-                                            )}
-                                        </div>
-                                    )) : (
+                                                {activeTab === 'lotto' ? (
+                                                    <div className="space-y-1.5">
+                                                        {sets.map((set, si) => (
+                                                            <div key={si} className="flex gap-1 flex-wrap">
+                                                                {set.map((n, ni) => <span key={ni} className={`w-5 h-5 rounded-full flex items-center justify-center text-white font-black text-[8px] shadow-sm ${getBallColor(n)}`}>{n}</span>)}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex items-center gap-3">
+                                                        <span className="text-purple-600 font-black px-2 py-0.5 bg-purple-100 rounded-lg text-[10px]">{item.group}조</span>
+                                                        <div className="flex gap-1">
+                                                            {item.digits.map((d, di) => <span key={di} className="w-5 h-7 bg-slate-800 rounded-md flex items-center justify-center text-white font-black text-[10px]">{d}</span>)}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    }) : (
                                         <div className="flex flex-col items-center justify-center py-20 opacity-20">
                                             <i className="lucide-archive w-10 h-10 mb-2"></i>
                                             <p className="text-[10px] font-black uppercase text-center">No Saved Data</p>
